@@ -1,0 +1,931 @@
+---
+title: "Analiza rezultata teniskih mečeva"
+author: 'Tipseri: Alan Đurđević, Matej Magat, Tin Šaban, Ivan Zeba'
+date: "Zagreb, `r format(Sys.time(), '%B %Y.')`"
+output:
+  pdf_document:
+    keep_tex: yes
+    toc: yes
+    number_sections: no
+    extra_dependencies: subfig
+  html_document:
+    df_print: paged
+  word_document:
+    toc: yes
+header-includes: \usepackage{fvextra} \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines,commandchars=\\\{\}}
+documentclass: report
+papersize: a4
+linestretch: 1.3
+fontsize: 12pt
+geometry: margin=0.5in
+links-as-notes: yes
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, comment = "", warning = FALSE)
+```
+
+```{r, echo=FALSE}
+pdf.options(encoding='ISOLatin2')
+```
+
+\newenvironment{cols}[1][]{}{}
+
+```{=tex}
+\newenvironment{col}[1]{\begin{minipage}{#1}\ignorespaces}{%
+\end{minipage}
+\ifhmode\unskip\fi
+\aftergroup\useignorespacesandallpars}
+```
+```{=tex}
+\def\useignorespacesandallpars#1\ignorespaces\fi{%
+#1\fi\ignorespacesandallpars}
+```
+```{=tex}
+\makeatletter
+\def\ignorespacesandallpars{%
+  \@ifnextchar\par
+    {\expandafter\ignorespacesandallpars\@gobble}%
+    {}%
+}
+\makeatother
+```
+# Uvod {-}
+
+Za pravilno donošenje odluka o treningu tenisača i organizaciji teniskih
+mečeva, ključna je detaljna obrada postojećih podataka o prijašnjim
+mečevima.
+
+U ovom projektu obrađujemo prikupljene podatke o preko 100,000 odigranih
+teniskih mečeva ATP turnira za svaku sezonu od 1991. do 2023. godine.
+Neke od izmjerenih varijabla su: vrsta podloge, broj asova, broj
+dvostrukih pogrešaka, postotak uspješnosti prvog servisa, ukupan broj
+osvojenih poena, itd.
+
+Projekt navodi mnoge analize deskriptivne statistike:
+
+-   Udio različitih podloga u ATP mečevima
+-   Starost pobjednika i svih sudionika ATP-a
+-   Visina pobjednika i svih sudionika ATP-a
+-   Udio različitih nacionalnosti igrača koji su sudjelovali na ATP-u
+-   Udio dominantne ruke među svim sudionicima ATP-a
+
+Također obrađujemo sljedeća istraživačka pitanja:
+
+-   Kakva je distribucija mečeva na specifičnim podlogama u različitim
+    godišnjim dobima?
+-   Postoji li značajna razlika u prosječnom broju dvostrukih pogrešaka
+    između mečeva odigranih na otvorenom u odnosu na mečeve odigrane na
+    zatvorenom terenu?
+-   Ima li razlike u broju serviranih asova na različitim podlogama?
+-   Kakva je veza između vrste terena i vjerojatnosti da će mečevi otići
+    u peti set?
+-   Možemo li procijeniti broj asova koje će igrač odservirati u tekućoj
+    (zadnjoj dostupnoj sezoni) na temelju njegovih rezultata iz
+    prethodnih sezona?
+
+# 1 Deskriptivna statistika
+
+### 1.0.1 Učitavanje potrebnih paketa
+
+```{r echo=T, error=FALSE, warning=FALSE, message=FALSE, results='hide'}
+packages <- c("dplyr", "readr", "lubridate", "stringr", "nortest", "fastDummies")
+lapply(packages, library, character.only=TRUE)
+```
+
+### 1.0.2 Spajanje podataka u jedinstvenu tablicu
+
+```{r echo=T, error=FALSE, warning=FALSE, message=FALSE}
+matches <- list.files(path=paste(getwd(), "/ATP-Matches", sep = ""), pattern = "*.csv" ,full.names = TRUE) %>% lapply(read_csv) %>% bind_rows
+```
+
+## 1.1 Svojstva skupa podataka
+
+### 1.1.1 Mjereni podatci o teniskim mečevima
+
+```{r}
+names(matches)
+```
+
+### 1.1.2 Dimenzije podataka
+
+```{r}
+cat("Dimenzije podataka: ", dim(matches))
+```
+
+### 1.1.3 Postotci nedostajućih vrijednosti
+
+```{r, echo=FALSE}
+cat ("Postotak nedostajućih vrijednosti za varijablu:\n")
+i = 1
+for(col_name in names(matches)){
+  if(sum(is.na(matches[, col_name])) > 0){
+    cat(col_name, ":\t", round(sum(is.na(matches[, col_name])) / nrow(matches) * 100, digits=2), "%")
+    if (i %% 3 == 0) {
+      cat("\n")
+    } else {
+      cat("   ")
+    }
+    i = i + 1
+  }
+}
+```
+
+\newpage
+
+### 1.1.4 Čišćenje podataka
+
+Podatke starije od 1991. nismo uključili u testni skup podataka.
+
+Obrisali smo meč 11. 1. 2016. između Gillesa Mullera i Jeremyja Chardyja
+koji je prema podatku trajao 1146 minuta i meč 1. 5. 2017. između Hyeona
+Chunga i Martina Kližana koji je trajao 987 minuta. Mečeve smo izbacili
+jer je najduži teniski meč službeno zabilježen trajao 665 minuta između
+Johna Isnera i Nicolasa Mahuta na Wimbledonu 2010.
+
+<https://olympics.com/en/news/longest-tennis-match-history-grand-slam-record>
+
+Na internetu postoji podatak da je meč između Hyeona Chunga i Martina
+Kližana uistinu trajao 987 minuta, ipak smo odlučili podatak izostaviti
+iz skupa podataka.
+
+<https://www.tennisabstract.com/cgi-bin/player-classic.cgi?p=MartinKlizan&f=ACareerqqDMunichqq>
+
+Zbog velikog postotka nedostajućih vrijednosti za stupce winner_seed,
+winner_entry, loser_seed i loser_entry, odlučili smo izbaciti te stupce.
+
+```{r}
+matches <- matches[matches$minutes <= 665 | is.na(matches$minutes), ]
+matches <- select(matches, -winner_seed, -winner_entry, -loser_seed, -loser_entry)
+```
+### 1.1.5 Dimenzije očišćenih podataka
+
+```{r}
+cat("Dimenzije očišćenih podataka: ", dim(matches))
+```
+
+
+### 1.1.6 Prikaz podataka
+
+```{r}
+View(matches)
+```
+
+
+\newpage
+
+## 1.2 Histogram podloga
+
+Histogram podloga nam pokazuje postotak teniskih mečeva odigranih na
+pojedinoj podlozi. Histogram nam pokazuje da se najviše teniskih mečeva
+odigrava na tvrdoj podlozi (oko 50 %) dok je na 2. mjestu zemljana
+podloga (oko 35 %), a trava i tepih imaju podjednak udio (oko 10 %).
+
+```{r}
+barplot(table(matches$surface) / nrow(matches) * 100, ylab = "Postotak", xlab = "Podloga", ylim = range(pretty(c(0, table(matches$surface) / nrow(matches) * 100 * 1.1))))
+```
+
+## 1.3 Usporedba starosti tenisača
+
+```{r}
+
+winner_cols <- matches[, c("winner_id", "winner_age")]
+loser_cols <- matches[, c("loser_id", "loser_age")]
+colnames(loser_cols) <- colnames(winner_cols)
+combined_matches <- rbind(winner_cols, loser_cols)
+
+winner_tour <- matches[matches$round == 'F', ]
+cat('Prosječna godina svih tenisača: ', mean(combined_matches$winner_age, na.rm = TRUE), "\n")
+cat('Prosječna godina pobjednika turnira: ', mean(winner_tour$winner_age, na.rm = TRUE), "\n")
+```
+
+
+### 1.3.1 Pravokutni dijagram starosti
+
+Pravokutni dijagram starosti tenisača nam pokazuje da je medijalna
+vrijednost oko 25 godina te da su također pobjednici turnira u toj
+vrijednosti. Pedeset posto igrača se nalazi između 20 i 30 godina dok
+najstariji igrač ima preko 45 godina, a najmlađi ispod 15.
+
+```{r}
+boxplot(combined_matches$winner_age, winner_tour$winner_age, names = c("Godine svih tenisača", "Godine pobjednika turnira"), ylab="Godine")
+```
+
+## 1.4 Usporedba visine tenisača
+
+```{r}
+winner_cols <- matches[, c("winner_id", "winner_ht")]
+loser_cols <- matches[, c("loser_id", "loser_ht")]
+colnames(loser_cols) <- colnames(winner_cols)
+combined_matches <- rbind(winner_cols, loser_cols)
+unique_matches <- combined_matches %>% distinct(winner_id, .keep_all = TRUE)
+winner_tour <- matches[matches$round == 'F', ]
+cat('Prosječna visina svih tenisača: ', mean(unique_matches$winner_ht, na.rm = TRUE), "\n")
+cat('Prosječna visina pobjednika turnira: ', mean(winner_tour$winner_ht, na.rm = TRUE), "\n")
+```
+
+\newpage
+
+### 1.4.1 Pravokutni dijagram visina tenisača
+
+<!-- neki tekst -->
+
+::: {.cols data-latex=""}
+::: {.col data-latex="{0.55\\textwidth}"}
+```{r, echo=FALSE, fig.width=5, fig.height=4}
+boxplot(unique_matches$winner_ht, winner_tour$winner_ht, names = c("Svi tenisači", "Pobjednici"), ylab="Visine")
+```
+:::
+
+::: {.col data-latex="{0.05\\textwidth}"}
+  <!-- an empty Div (with a white space), serving as
+a column separator -->
+:::
+
+::: {.col data-latex="{0.4\\textwidth}"}
+Pravokutni dijagram visina tenisača nam pokazuje da su tenisači većinom
+veći od 180 cm, te također nam pokazuje da je prosječna visina pobjednika
+turnira viša nego li je to prosječna visina svih tenisača.
+:::
+:::
+
+<!-- \newpage -->
+
+## 1.5 Nacionalnosti tenisača
+
+### 1.5.1 Histogram država
+
+Histogram država prikazuje koliko su pojedine države imale različitih
+tenisača. Prvo smo izdvojili stupce koji su nam potrebni (id i ioc) za
+pobjednike i gubitnike, zatim smo spojili podatke (rbind) te smo
+očistili podatke od višestrukog pojavljivanja istog id-a. Histogram je
+malo nepregledan zbog velikog broja država, no možemo iščitati da
+najveći broj tenisača dolazi iz Sjedinjenih Američkih Država, zatim
+slijedi Australija. Još se izdvajaju Španjolska, Francuska, Velika
+Britanija, Njemačka i Italija po broju tenisača, dok su ostale države
+manje uočljive.
+
+```{r}
+winner_cols <- matches[, c("winner_id", "winner_ioc")]
+loser_cols <- matches[, c("loser_id", "loser_ioc")]
+colnames(loser_cols) <- colnames(winner_cols)
+combined_matches <- rbind(winner_cols, loser_cols)
+unique_matches <- combined_matches %>% distinct(winner_id, .keep_all = TRUE)
+barplot(table(unique_matches$winner_ioc), las=2,cex.names=.3, ylab = "Frekvencija", ylim = range(pretty(c(0, table(unique_matches$winner_ioc)))), xlim = c(0,155))
+```
+
+\newpage
+
+## 1.6 Graf udjela dominantne ruke
+
+Za prikaz udjela dominantne ruke koristili smo kružni graf. Iz grafa
+možemo vidjeti znatno veći udio dešnjaka od ljevaka. Oko 10 % ljudske
+populacije je ljevoruko pa nas ovaj podatak ne iznenađuje.
+
+```{r fig.align='center'}
+winner_cols <- matches[, c("winner_id", "winner_hand")]
+loser_cols <- matches[, c("loser_id", "loser_hand")]
+
+colnames(loser_cols) <- colnames(winner_cols)
+
+combined_matches <- rbind(winner_cols, loser_cols)
+
+combined_matches <- filter(combined_matches, winner_hand %in% c("L", "R"))
+
+unique_matches <- combined_matches %>% distinct(winner_id, .keep_all = TRUE)
+# table(unique_matches$winner_hand)
+pie(table(unique_matches$winner_hand), col = c("pink", "lightblue"))
+```
+
+\newpage
+
+## 1.7 Graf udjela mečeva po broju "best of" setova
+
+Strukturnim krugom prikazano je koliki udio mečeva se igra "best of 3" (na
+dva dobivena seta), a koliki "best of 5" (na tri dobivena seta). Vidljivo
+je da puno više mečeva (preko 80%) igra "best of 3".
+
+```{r fig.align='center'}
+winner_tour <- matches[matches$round == 'F', ]
+set_vrijeme <- matches[, c("best_of", "minutes")]
+# table(set_vrijeme$best_of)
+pie(table(set_vrijeme$best_of), col = c("pink", "lightblue"))
+```
+
+## 1.8 Usporedba trajanja mečeva
+
+S pomoću pravokutnog dijagrama vizualizirali smo i usporedili trajanje
+mečeva s 3 odnosno 5 setova. Očekivano, medijan mečeva s 3 seta je manji
+od medijana mečeva s 5 setova. Također se vidi da je treći kvartil
+mečeva s 3 seta veći od prvog kvartila mečeva s 5 setova, kao i što je
+gornji izdanak mečeva s 3 seta veći od trećeg kvartila mečeva s 5
+setova.
+
+```{r fig.align='center'}
+s3=set_vrijeme[set_vrijeme$best_of == 3 & (!is.na(set_vrijeme$minutes)),]
+s5=set_vrijeme[set_vrijeme$best_of == 5 & (!is.na(set_vrijeme$minutes)),]
+
+boxplot(s3$minutes, s5$minutes, names = c ("3 seta", "5 setova"), ylab="Minute")
+
+filter(set_vrijeme, !is.na(minutes)) %>% mutate(., katTrajanje = ntile(minutes, 20)) -> set_vrijeme
+
+d1 <- table(filter(set_vrijeme, best_of == 5)$katTrajanje)/nrow(filter(set_vrijeme, best_of == 5))
+d2 <- table(filter(set_vrijeme, best_of == 3)$katTrajanje)/nrow(filter(set_vrijeme, best_of == 3))
+data <- t(cbind(d1, d2))
+```
+
+```{r}
+h = hist(s3$minutes,plot=FALSE)
+h$density = h$counts/sum(h$counts)*100
+
+```
+
+```{r}
+h2 = hist(s5$minutes,plot=FALSE)
+h2$density = h2$counts/sum(h2$counts)*100
+
+```
+
+::: {.cols data-latex=""}
+::: {.col data-latex="{0.4875\\textwidth}"}
+```{r, echo=FALSE, fig.width=5, fig.height=4}
+plot(h,freq=FALSE, xlim = c(0,250), ylim = c(0,30), main = "Trajanje \"best of 3\" mečeva", ylab = "Postotak", xlab = "Vrijeme(min)")
+```
+:::
+
+::: {.col data-latex="{0.025\\textwidth}"}
+  <!-- an empty Div (with a white space), serving as
+a column separator -->
+:::
+
+::: {.col data-latex="{0.4875\\textwidth}"}
+```{r, echo=FALSE, fig.width=5, fig.height=4}
+plot(h2,freq=FALSE, xlim = c(0,400), ylim = c(0,60), main = "Trajanje \"best of 5\" mečeva", ylab = "Postotak", xlab = "Vrijeme(min)")
+```
+:::
+:::
+
+
+# 2 Istraživačka pitanja
+
+## 2.1 Distribucija mečeva ovisno o podlozi i godišnjem dobu
+
+Prvo istraživačko pitanje:\
+Kakva je distribucija mečeva na specifičnim podlogama u različitim
+godišnjim dobima?
+
+```{r}
+podloga_datum <- matches[, c("surface", "tourney_date")]
+podloga_datum$tourney_date <- ymd(podloga_datum$tourney_date)
+# funkcija koja mapira mjesec iz datuma na godišnje doba
+get_season <- function(date) {
+  month <- month(date)
+  if (month %in% c(3, 4, 5)) {
+    return("Proljeće")
+  } else if (month %in% c(6, 7, 8)) {
+    return("Ljeto")
+  } else if (month %in% c(9, 10, 11)) {
+    return("Jesen")
+  } else {
+    return("Zima")
+  }
+}
+
+podloga_datum$god_doba <- sapply(podloga_datum$tourney_date, get_season)
+
+tepih <- podloga_datum[podloga_datum$surface == "Carpet",]
+zemlja <- podloga_datum[podloga_datum$surface == "Clay",]
+trava <- podloga_datum[podloga_datum$surface == "Grass",]
+tvrda <- podloga_datum[podloga_datum$surface == "Hard",]
+```
+
+Stvaranje barplotova iz vektora stvorenih gore (kod izbačen zbog
+sažetosti)
+
+\newpage
+
+```{r echo=FALSE, fig.cap='',fig.ncol = 2,out.width = "50%",fig.align = "center", fig.subcap=c('Tepih', 'Zemlja', 'Trava', 'Tvrda podloga', 'Sve podloge')}
+barplot(table(tepih$god_doba) / nrow(tepih) * 100 , ylab = "Postotak",  ylim = range(pretty(c(0, table(tepih$god_doba) / nrow(tepih) * 100 * 1.1))))
+barplot(table(zemlja$god_doba) / nrow(zemlja) * 100,  ylab = "Postotak",  ylim = range(pretty(c(0, table(zemlja$god_doba) / nrow(zemlja) * 100 * 1.1))))
+barplot(table(trava$god_doba) / nrow(trava) * 100, ylab = "Postotak",  ylim = range(pretty(c(0, table(trava$god_doba) / nrow(trava) * 100 * 1.1))))
+barplot(table(tvrda$god_doba) / nrow(tvrda) * 100, ylab = "Postotak", ylim = range(pretty(c(0, table(tvrda$god_doba) / nrow(tvrda) * 100 * 1.1))))
+
+barplot(table(podloga_datum$god_doba) / nrow(podloga_datum) * 100, ylab = "Postotak", ylim = range(pretty(c(0, table(podloga_datum$god_doba) / nrow(podloga_datum) * 100 * 1.1))))
+
+```
+
+Graf pod a) prikazuje da se na tepihu igra najviše u jesen, a nakon toga
+u zimi. To ima smisla s obzirom na to da je teren s tepihom često u
+zatvorenom prostoru.
+
+Tereni na otvorenom najčešće koriste zemlju ili travu te nam to i
+grafovi pod b) i c) potvrđuju.
+
+Graf pod b) prikazuje da se zemljani teren najčešće koristi u proljeće i
+ljeto, dok graf pod c) prikazuje da se travnati teren koristi gotovo
+isključivo ljeti.
+
+Graf pod d) prikazuje da je tvrda podloga skoro podjednako
+distribuirana, s najvećim korištenjem zimi.
+
+\newpage
+
+## 2.2 Dvostruke pogreške na zatvorenom i otvorenom terenu
+
+Drugo istraživačko pitanje:\
+Postoji li značajna razlika u prosječnom broju dvostrukih pogrešaka
+između mečeva odigranih na otvorenom u odnosu na mečeve odigrane na
+zatvorenom terenu?
+
+```{r}
+surface_df <- matches[, c("surface", "w_df", "l_df")]
+# funkcija koja mapira površinu na vanjski i unutarnji teren
+get_outdoor <- function(surface) {
+  if (surface %in% c("Grass", "Clay")) {
+    return("T")
+  } else if (surface %in% c("Carpet", "Hard")) {
+    return("F")
+  } else {
+    return("")
+  }
+}
+
+surface_df$is_outdoor <- sapply(surface_df$surface, get_outdoor)
+surface_df <- transmute(surface_df, df = w_df+l_df, is_outdoor)
+
+outdoor_df <- filter(surface_df, is_outdoor == "T")
+indoor_df <- filter(surface_df, is_outdoor == "F")
+```
+
+Prvo Lillieforsovim testom provjeravamo dolaze li uzorci iz normalnih distribucija.
+
+```{r}
+lillie.test(outdoor_df$df)
+lillie.test(indoor_df$df)
+```
+Razina značajnosti je 0.05 te zbog p-vrijednosti manje od 0.05 odbacujemo pretpostavku normalnosti uzoraka.
+Histogrami uzoraka nam dodatno osnažuju ovu tvrdnju.
+
+::: {.cols data-latex=""}
+::: {.col data-latex="{0.4875\\textwidth}"}
+```{r, echo=FALSE, fig.width=5, fig.height=4}
+h = hist(outdoor_df$df,plot=FALSE)
+h$density = h$counts/sum(h$counts)*100
+h2 = hist(indoor_df$df,plot=FALSE)
+h2$density = h2$counts/sum(h2$counts)*100
+plot(h,freq=FALSE, xlim = c(0,30), main = "Broj dvostrukih pogrešaka na vanjskim terenima", ylab = "Postotak", xlab = "Broj dvostrukih pogrešaka")
+```
+:::
+
+::: {.col data-latex="{0.025\\textwidth}"}
+  <!-- an empty Div (with a white space), serving as
+a column separator -->
+:::
+
+::: {.col data-latex="{0.4875\\textwidth}"}
+```{r, echo=FALSE, fig.width=5, fig.height=4}
+plot(h2,freq=FALSE,xlim = c(0,30), ylim = c(0,25), main = "Broj dvostrukih pogrešaka na unutarnjim terenima", ylab = "Postotak", xlab = "Broj dvostrukih pogrešaka")
+```
+:::
+:::
+
+### 2.2.1 Mann-Whitney-Wilcoxonov test
+
+Pošto ne možemo pretpostaviti normalnost populacije, morat ćemo provesti Mann-Whitney-Wilcoxonov test - neparametarska alternativa t-testu za nezavisne uzorke.
+
+H~0~ : Razlika u sredinama dvostrukih pogrešaka na vanjskom i unutarnjem
+terenu jednaka je 0
+
+H~1~ : Razlika u sredinama dvostrukih pogrešaka na vanjskom i unutarnjem
+terenu nije jednaka 0
+
+$$
+u_1 = w_1 - \frac{n_1(n_1 + 1)}{2}
+$$
+$$
+u_2 = w_2 - \frac{n_2(n_2 + 1)}{2}
+$$
+$$
+u = min(u_1, u_2)
+$$
+```{r}
+wilcox.test(outdoor_df$df, indoor_df$df, alt = "two.sided")
+```
+
+Razina značajnosti je 0.05 te zbog p-vrijednosti manje od 0.05 odbacujemo H~0~ i zaključujemo da postoji značajna razlika u prosječnom broju dvostrukih pogrešaka između mečeva odigranih na otvorenom u odnosu na mečeve odigrane na zatvorenom terenu.
+
+### 2.2.1 T-test
+
+Provest ćemo i t-test iako uzorci ne proizlaze iz normalne populacije kako bismo vidjeli poklapa li se s Wilcoxon–Mann–Whitney testom.
+
+Da bismo mogli uopće mogli provesti t-test, moramo vidjeti jesu li
+varijance dvije populacije jednake ili različite.
+
+Za slučaj iz zadatka pretpostavli bismo da varijance nisu jednake, s
+obzirom na to da su na vanjskom terenu prisutni dodatni čimbenici.
+Sunce, vjetar, temperatura i vlažnost su samo od nekih njih.
+
+Provodimo f-test za provjeru jednakosti varijanci dvije populacije.
+
+H~0~ : Omjer varijanci dvostrukih pogrešaka na vanjskom i unutarnjem
+terenu jednak je 1
+
+H~1~ : Omjer varijanci dvostrukih pogrešaka na vanjskom i unutarnjem
+terenu nije jednak 1
+
+$$
+F = \frac{S^2_{X_1}}{S^2_{X_2}} \sim f (n - 1, m - 1)
+$$
+
+```{r}
+var.test(outdoor_df$df, indoor_df$df, ratio = 1, alternative = "two.sided", conf.level = 0.95, na.action("na.exclude"))
+```
+
+Zbog p-vrijednosti manje od 0.05 možemo odbaciti tvrdnju da su varijance
+dvostrukih pogrešaka na vanjskom i zatvorenom terenu jednake.
+
+Sada možemo provesti t-test uz pretpostavku nejednakih varijanca.
+
+H~0~ : Razlika u sredinama dvostrukih pogrešaka na vanjskom i unutarnjem
+terenu jednaka je 0
+
+H~1~ : Razlika u sredinama dvostrukih pogrešaka na vanjskom i unutarnjem
+terenu nije jednaka 0
+
+$$T = \frac{\bar{x_{1}} - \bar{x_{2}}-(\mu_1 - \mu_2)}{\sqrt{S^2_1 / n_1 + S^2_2 / n_2}} \sim t^2(\lfloor{v}\rfloor )$$
+$$v = \frac{(s^2_1/n_1 + s^2_2/n_2)^2}{(s^2_1/n_1)^2/(n_1 - 1) + (s^2_2/n_2)^2/(n_2 - 1)}$$
+
+```{r}
+t.test(outdoor_df$df, indoor_df$df, alt = "two.sided", var.equal = FALSE)
+```
+Zbog p-vrijednosti manje od 0.05, odbacujemo nultu hipotezu i prihvaćamo alternativu.
+Zaključujemo da postoji značajna razlika u prosječnom broju dvostrukih pogrešaka između mečeva odigranih na otvorenom u odnosu na mečeve odigrane na zatvorenom terenu.
+
+
+<!-- neki tekst -->
+
+::: {.cols data-latex=""}
+::: {.col data-latex="{0.55\\textwidth}"}
+```{r, echo=FALSE}
+boxplot(outdoor_df$df, indoor_df$df, names = c("Otvoreni", "Zatvoreni"),xlab="Teren" ,ylab="Dvostruka pogreška")
+```
+:::
+
+::: {.col data-latex="{0.05\\textwidth}"}
+  <!-- an empty Div (with a white space), serving as
+a column separator -->
+:::
+
+::: {.col data-latex="{0.4\\textwidth}"}
+Pravokutni dijagrami nam pokazuju da na zatvorenom terenu ima u
+prosjeku više dvostrukih pogrešaka, ali vanjski tereni pokazuju veću
+varijancu
+:::
+:::
+
+## 2.3 Servirani asovi ovisno o podlozi
+
+Treće istraživačko pitanje:\
+Ima li razlike u broju serviranih asova na različitim podlogama?
+
+Da bismo provjerili ovo tvrdnju, provest ćemo ANOVA-u, metodu kojom
+testiramo sredine više populacija.
+
+Pretpostavke ANOVA-e su:
+
+-   nezavisnost pojedinih podataka u uzorcima,
+-   normalna razdioba podataka,
+-   homogenost varijanci među populacijama.
+
+```{r}
+tepihAsovi <- matches[matches$surface == "Carpet" ,]
+zemljaAsovi <- matches[matches$surface == "Clay",]
+travaAsovi <- matches[matches$surface == "Grass",]
+tvrdaAsovi <- matches[matches$surface == "Hard",]
+
+tepihAsovi <- na.omit(transmute(tepihAsovi, ukupnoAsovi = w_ace + l_ace))
+zemljaAsovi <- na.omit(transmute(zemljaAsovi, ukupnoAsovi = w_ace + l_ace))
+travaAsovi <- na.omit(transmute(travaAsovi, ukupnoAsovi = w_ace + l_ace))
+tvrdaAsovi <- na.omit(transmute(tvrdaAsovi, ukupnoAsovi = w_ace + l_ace))
+
+podlogeAsovi <- na.omit(transmute(matches, podloga = surface, ukupnoAsovi = w_ace + l_ace))
+
+podlogeAsovi$podloga <- as.factor(podlogeAsovi$podloga)
+```
+
+Lillieforsovim testom provjeravamo pretpostavku normalnosti
+
+```{r}
+lillie.test(podlogeAsovi$ukupnoAsovi)
+lillie.test(tepihAsovi$ukupnoAsovi)
+lillie.test(zemljaAsovi$ukupnoAsovi)
+lillie.test(travaAsovi$ukupnoAsovi)
+lillie.test(tvrdaAsovi$ukupnoAsovi)
+```
+Razina značajnosti je 0.05 te zbog p-vrijednosti manje od 0.05 odbacujemo tvrdnju da uzorci proizlaze
+iz populacije s normalnom distribucijom.
+
+Također nam to i potvrđuju histogrami:
+
+```{r echo=FALSE, fig.cap='',fig.ncol = 2,out.width = "50%",fig.align = "center", fig.subcap=c('Tepih', 'Zemlja', 'Trava', 'Tvrda podloga', 'Sve podloge')}
+h = hist(tepihAsovi$ukupnoAsovi,plot=FALSE)
+h$density = h$counts/sum(h$counts)*100
+plot(h,freq=FALSE, main = "", ylab = "Postotak", xlab = "Broj asova", xlim=c(0,50))
+
+h = hist(zemljaAsovi$ukupnoAsovi,plot=FALSE)
+h$density = h$counts/sum(h$counts)*100
+plot(h,freq=FALSE, main = "", ylab = "Postotak", xlab = "Broj asova", xlim=c(0,40), ylim=c(0,50))
+
+h = hist(travaAsovi$ukupnoAsovi,plot=FALSE)
+h$density = h$counts/sum(h$counts)*100
+plot(h,freq=FALSE, main = "", ylab = "Postotak", xlab = "Broj asova", xlim=c(0,100), ylim=c(0,80))
+
+h = hist(tvrdaAsovi$ukupnoAsovi,plot=FALSE)
+h$density = h$counts/sum(h$counts)*100
+plot(h,freq=FALSE, main = "", ylab = "Postotak", xlab = "Broj asova", xlim=c(0,60), ylim=c(0,35))
+
+h = hist(podlogeAsovi$ukupnoAsovi,plot=FALSE)
+h$density = h$counts/sum(h$counts)*100
+plot(h,freq=FALSE, main = "", ylab = "Postotak", xlab = "Broj asova", xlim=c(0,60), ylim=c(0,60))
+```
+
+\newpage
+
+Pošto smo utvrdili da uzorci ne proizlaze iz normalno distribuirane
+populacije, ne provodimo Bartlettov test homogenosti varijanci. Ne
+provodimo ga jer je test osjetljiv na odstupanja od normalne razdiobe.
+Odnosno, ako uzorci dolaze iz nenormalnih distribucija, onda Bartlettov
+test samo provjerava nenormalnost.
+
+Također smo utvrdili da ne možemo provesti ANOVA-u, budući da nismo
+zadovoljili sve zahtjeve ANOVA-e. Zato provodimo Kruskal-Wallisov test
+koji ne pretpostavlja normalnu distribuciju i uspoređuje srednje rangove koristeći varijancu rangova.
+
+Pretpostavke za Kruskal-Wallisov test:
+
+-   Pretpostavlja se da podaci nisu normalni
+-   Test se najčešće koristi u analizi tri ili više skupina
+-   Pretpostavlja se da će podaci imati sličnu distribuciju po skupinama.
+-   Podaci bi trebali biti nasumično odabrani neovisni uzorci, tako da skupine ne bi trebale biti međusobno povezane.
+-   Svaki grupni uzorak trebao bi imati najmanje 5 promatranja za dovoljnu veličinu uzorka.
+
+H~0~ : Medijani distribucija svih uzoraka su jednaki.
+
+H~1~ : Barem dva medijana svih uzoraka nisu jednaka.
+
+$$H = \frac{12}{n(n+1)}\sum_{i=1}^k \frac{R^2_i}{n_i} - 3(n+1) \sim \chi^2(k-1) $$
+
+```{r}
+kruskal.test(ukupnoAsovi ~ podloga, data = podlogeAsovi)
+```
+
+<!-- nemoj tu stavljati tekst -->
+
+::: {.cols data-latex=""}
+::: {.col data-latex="{0.55\\textwidth}"}
+```{r, echo=FALSE}
+boxplot(tepihAsovi$ukupnoAsovi, zemljaAsovi$ukupnoAsovi, travaAsovi$ukupnoAsovi, tvrdaAsovi$ukupnoAsovi  , names = c("Tepih", "Zemlja", "Trava", "Tvrda"),xlab="Teren" ,ylab="Asovi")
+```
+:::
+
+::: {.col data-latex="{0.05\\textwidth}"}
+  <!-- an empty Div (with a white space), serving as
+a column separator -->
+:::
+
+::: {.col data-latex="{0.4\\textwidth}"}
+Zbog razine značajnosti 0.05 i zbog p-vrijednosti manje od 0.05, odbacujemo nul-hipotezu i zaključujemo
+da uzorci ne proizlaze iz iste populacije. To znači da postoji razlika u
+broju serviranih asova na različitim podlogama.
+:::
+:::
+
+\newpage
+
+## 2.4 Veza između vrste terena i ulaska u peti set
+
+Četvrto istraživačko pitanje:\
+Kakva je veza između vrste terena i vjerojatnosti da će mečevi otići u
+peti set?
+
+Stvaramo kontingencijsku tablicu:
+
+```{r}
+pet_setova <- filter(matches, best_of == 5)
+pet_setova <- select(pet_setova, score, surface)
+pet_setova$score <- if_else(str_count(pet_setova$score, "-") == 5, T, F)
+tab = table(pet_setova)
+tab_old = tab
+tab = addmargins(tab)
+tab
+```
+
+Da bismo mogli provesti Hi-kvadrat test nezavisnosti moramo zadovoljiti
+ove kriterije:
+
+-   Broj stupnjeva slobode $$v = (brojStupaca - 1) * (brojRedaka - 1) > 1$$
+-   Očekivana vrijednost ćelije trebala bi biti veća ili jednaka od 5.
+
+```{r}
+dof <- (nrow(tab_old) - 1) * (ncol(tab_old) - 1)
+cat("Degrees of freedom: ", dof, "\n")
+
+for (col_names in colnames(tab)){
+  for (row_names in rownames(tab)){
+    if (!(row_names == 'Sum' | col_names == 'Sum') ){
+      cat('Očekivane frekvencije za razred ',col_names,'-',row_names,': ',(tab[row_names,'Sum'] * tab['Sum',col_names]) / tab['Sum','Sum'],'\n')
+    }
+  }
+}
+```
+
+Pošto su zahtjevi ispunjeni, provodimo Hi-kvadrat test nezavisnosti nad
+tablicom.
+
+```{r, echo=FALSE}
+tab_old
+```
+
+H~0~ : Odlazak meča u peti set ne ovisi o vrsti podloge.
+
+H~1~ : Odlazak meča u peti set ovisi o vrsti podloge.
+
+$$\chi^2 = \sum \frac {(O - E)^2}{E}$$
+
+```{r}
+chisq.test(tab_old,correct=F)
+```
+
+Nulta hipoteza se ne odbacuje na razini značajnosti 0.05, p-vrijednost nije manja od 0,05.
+Zaključujemo da odlazak meča u peti ne set ovisi o vrsti podloge.
+
+<!-- neki tekst -->
+
+::: {.cols data-latex=""}
+::: {.col data-latex="{0.55\\textwidth}"}
+```{r echo=FALSE}
+pet_setova_true = filter(pet_setova, pet_setova$score == TRUE)
+pet_setova_false = filter(pet_setova, pet_setova$score == FALSE)
+
+pet_setova_true <- pet_setova_true$surface
+pet_setova_false <- pet_setova_false$surface
+
+DA = table(pet_setova_true) / table(pet_setova$surface) * 100
+NE = table(pet_setova_false) / table(pet_setova$surface) * 100
+
+barplot(cbind(DA, NE), beside = TRUE, col=c("darkgreen", "orange", "lightgreen", "lightblue"), xlab = "Meč je otišao u peti set", ylab = "Postotak")
+legend("topleft",c("Tepih","Zemlja","Trava", "Tvrda"),fill = c("darkgreen", "orange", "lightgreen", "lightblue"))
+```
+:::
+
+::: {.col data-latex="{0.05\\textwidth}"}
+  <!-- an empty Div (with a white space), serving as
+a column separator -->
+:::
+
+::: {.col data-latex="{0.4\\textwidth}"}
+Iz grafa vidimo da su vjerojatnosti odlaska i neodlaska u peti set
+podjednake za svaku vrstu podloge.
+:::
+:::
+
+\newpage
+
+## 2.5 Predviđanje broja asova
+
+Peto istraživačko pitanje:\
+Možemo li procijeniti broj asova koje će igrač odservirati u tekućoj
+(zadnjoj dostupnoj sezoni) na temelju njegovih rezultata iz prethodnih
+sezona?
+
+Da bismo mogli procijeniti broj asova koje će igrač odservirati u tekućoj sezoni temeljem njegovih prethodnih rezultata, sastavit ćemo model linearne regresije.
+$$Y = \beta_0 + \sum_{j = 1}^{p}\beta_jx_j + \epsilon$$
+Modelirat ćemo regresiju tako da odservirani asovi u tekućoj godini ovise on njegovoj visini i broju odigranih mečeva prethodnih sezona. Također ćemo s pomoću "dummy" variable testirati ovise li odservirani asovi o tome je li igrač ljevak ili dešnjak.
+
+```{r echo=T, error=FALSE, warning=FALSE, message=FALSE, results='hide'}
+winners <- matches[,c("winner_name", "tourney_date", "winner_hand", "winner_ht", "w_ace")]
+winners$tourney_date <- year(ymd(winners$tourney_date))
+winners <- na.omit(winners)
+winners <- winners %>% group_by(winner_name, tourney_date, winner_ht, winner_hand) %>% summarise(broj_meceva = n(), broj_asova = sum(w_ace))
+losers <- matches[,c("loser_name", "tourney_date", "loser_hand", "loser_ht", "l_ace")]
+losers$tourney_date <- year(ymd(losers$tourney_date))
+losers <- na.omit(losers)
+losers <- losers %>% group_by(loser_name, tourney_date, loser_ht, loser_hand) %>% summarise(broj_meceva = n(), broj_asova = sum(l_ace))
+
+colnames(losers) <- colnames(winners)
+svi_igraci_tab <- rbind(winners, losers)
+svi_igraci_tab <- svi_igraci_tab %>% group_by(winner_name, tourney_date, winner_ht, winner_hand) %>% summarise(broj_meceva = sum(broj_meceva), broj_asova = sum(broj_asova))
+svi_igraci_tab_2023 <- svi_igraci_tab[svi_igraci_tab$tourney_date == 2023,]
+svi_igraci_tab <- svi_igraci_tab[svi_igraci_tab$tourney_date < 2023,]
+```
+
+Lillieforsovim testom provjeravamo dolaze li varijable visina igrača i broj mečeva iz normalnih populacija.
+```{r}
+lillie.test(svi_igraci_tab$winner_ht)
+lillie.test(svi_igraci_tab$broj_meceva)
+```
+
+Razina značajnosti je 0.05 te zbog p-vrijednosti manje od 0.05 odbacujemo tvrdnju da varijable proizlaze
+iz populacije s normalnom distribucijom.
+Dodatno ćemo provjeriti ovu tvrdnju crtajući grafove.
+
+
+::: {.cols data-latex=""}
+::: {.col data-latex="{0.4875\\textwidth}"}
+```{r, echo=FALSE, fig.width=5, fig.height=4}
+h = hist(svi_igraci_tab$winner_ht,plot=FALSE)
+h$density = h$counts/sum(h$counts)*100
+h2 = hist(svi_igraci_tab$broj_meceva,plot=FALSE)
+h2$density = h2$counts/sum(h2$counts)*100
+plot(h,freq=FALSE, main = "Distribucija visine igrača", ylab = "Postotak", xlab = "Visina", ylim = c(0,35))
+```
+:::
+
+::: {.col data-latex="{0.025\\textwidth}"}
+  <!-- an empty Div (with a white space), serving as
+a column separator -->
+:::
+
+::: {.col data-latex="{0.4875\\textwidth}"}
+```{r, echo=FALSE, fig.width=5, fig.height=4}
+plot(h2,freq=FALSE, main = "Distribucija broja mečeva", ylab = "Postotak", xlab = "Broj mečeva", ylim = c(0,50))
+```
+:::
+:::
+
+Graf distribucije visine igrača ukazuje na normalnu distribuciju iako nas Lillieforsov test navodi da zaključimo suprotno.
+Takav nije slučaj s distribucijom broja mečeva jer nam i oblik grafa pokazuje da se ne radi o normalnoj distribuciji.
+
+Pošto o pretpostavci normalnosti ovisi hoćemo li koristiti Pearsonov ili Spearmanov korelacijski koeficijent, izračunat ćemo oba i vidjeti što nam govore.
+
+```{r}
+cor.test(svi_igraci_tab$winner_ht, svi_igraci_tab$broj_meceva)
+cor.test(svi_igraci_tab$winner_ht, svi_igraci_tab$broj_meceva, method = "spearman")
+cor.test(svi_igraci_tab$winner_ht, svi_igraci_tab$broj_asova, method = "spearman")
+cor.test(svi_igraci_tab$broj_meceva, svi_igraci_tab$broj_asova, method = "spearman")
+```
+Pearsonov i Spearmanov korelacijski koeficijent visine igrača i broja mečeva nam oba ukazuju na vrlo slabu korelaciju s
+s obzirom na to da je rezultat u intervalu [0, 0.19]. Zaključujemo da je korelacija više nego dovoljno slaba da bismo te dvije varijable koristili pri modeliranju regresijskog modela.
+
+Stvaramo regresijski model i crtamo graf ovisnosti reziduala o vrijednostima prema kojima je model istreniran.
+```{r}
+reg = lm(broj_asova ~ winner_ht + broj_meceva, svi_igraci_tab)
+plot(reg$fitted.values, reg$residuals)
+```
+
+Ovisnost reziduala o visini igrača
+```{r}
+plot(svi_igraci_tab$winner_ht, reg$residuals)
+```
+
+Ovisnost broja asova o visini igrača
+```{r}
+plot(svi_igraci_tab$winner_ht, svi_igraci_tab$broj_asova)
+```
+
+```{r}
+summary(reg)
+```
+
+Ovaj sažetak nam pokazuje da visina i broj mečeva značajno utječu na broj asova. Spearmanov koeficijent nam je ukazivao da visina igrača slabo korelira s brojem asova pa možemo zaista zaključiti da je riječ o Simpsonovom paradoksu.
+
+Koeficijent determinacije je čak 73.39 %, a prilagođeni koeficijent determinacije 73.38 %. Koeficijent je vrlo visok, što znači da model odlično predviđa broj asova ovisno o visini igrači i broju mečeva u sezoni (73.39% varijance u podacima je objašnjeno linearnim modelom).
+
+```{r}
+svi_igraci_tab.d = dummy_cols(svi_igraci_tab, select_columns = "winner_hand")
+reg.d = lm(broj_asova ~ winner_ht + broj_meceva + winner_hand_L, svi_igraci_tab.d)
+summary(reg.d)
+```
+
+Velika p vrijednost kod lijeve ruke na nam ukazuje na to da ruka ne utječe na broj odserviranih asova.
+
+```{r}
+qqnorm(rstandard(reg))
+qqline(rstandard(reg), col = "red")
+```
+
+```{r}
+qqnorm(rstandard(reg.d))
+qqline(rstandard(reg.d), col = "red")
+```
+
+Predviđamo broj asova za nekoliko tenisača
+```{r}
+predvidi <- function(ime) {
+  cat(ime, "(", svi_igraci_tab_2023[svi_igraci_tab_2023$winner_name == ime,c("winner_ht", "broj_meceva")]$winner_ht, ",",
+      svi_igraci_tab_2023[svi_igraci_tab_2023$winner_name == ime,c("winner_ht", "broj_meceva")]$broj_meceva, ")\n")
+  broj_asova_stv <- svi_igraci_tab_2023[svi_igraci_tab_2023$winner_name == ime,c("broj_asova")]
+  p <- predict(reg, svi_igraci_tab_2023[svi_igraci_tab_2023$winner_name == ime,c("winner_ht", "broj_meceva")])
+ cat("predviđen broj asova: ", p , ", stvaran: ",  round(broj_asova_stv$broj_asova, 2), ", rezidual: ", round( broj_asova_stv$broj_asova - p, 2), "\n\n")
+}
+cat("Tenisač ( visina , broj mečeva )\n\n")
+predvidi("Novak Djokovic")
+predvidi("Carlos Alcaraz")
+predvidi("Daniil Medvedev")
+predvidi("Borna Coric")
+predvidi("Dominic Thiem")
+predvidi("Borna Gojo")
+```
